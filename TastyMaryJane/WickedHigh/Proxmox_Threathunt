@@ -1,0 +1,32 @@
+#!/bin/bash
+
+#  provide an IP address param
+if [ -z "$1" ]; then
+    echo "Usage: $0 <Proxmox_IP>"
+    exit 1
+fi
+
+PROXMOX_USER="root"
+PROXMOX_HOST="$1"
+LOG_SCRIPT="$(pwd)/log_traffic.sh"  # Getting the  full path of the log script. The second script is so that the traffic is logged locally. 
+
+# Protocols and their respective tcpdump filters
+declare -A PROTOCOLS
+PROTOCOLS["TCP"]="tcp"
+PROTOCOLS["FTP"]="port 21"
+PROTOCOLS["SSH"]="port 22"
+PROTOCOLS["Telnet"]="port 23"
+PROTOCOLS["DNS"]="port 53"
+
+# Installing the packages for a fresh install
+echo "Checking and installing dependencies..."
+sudo apt update && sudo apt install -y tcpdump ssh gnome-terminal
+
+# Opens a new terminal tab for each protocol and run log_traffic.sh
+for PROTO in "${!PROTOCOLS[@]}"; do
+    FILTER="${PROTOCOLS[$PROTO]}"
+    gnome-terminal --tab --title="$PROTO" -- bash -c "bash '$LOG_SCRIPT' '$PROTO' '$FILTER' '$PROXMOX_HOST'; exec bash"
+done
+
+#sanity check
+echo "All sessions started in new terminal tabs. Logs stored in ~/proxmox_logs."
