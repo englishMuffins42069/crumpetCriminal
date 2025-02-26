@@ -10,7 +10,7 @@ if ! [[ "$X_VALUE" =~ ^[0-9]+$ ]]; then
 fi
 
 # Ask for the admin IP
-read -p "Enter your personal IP for Proxmox Web GUI access: " ADMIN_IP
+read -p "Enter your personal IP for Proxmox Web GUI and SSH access: " ADMIN_IP
 
 # Define VM IPs dynamically based on user input
 declare -A VM_IPS=(
@@ -101,6 +101,10 @@ done
 # Harden Proxmox Web GUI access
 iptables -A INPUT -p tcp --dport 8006 -s $ADMIN_IP -j ACCEPT
 iptables -A INPUT -p tcp --dport 8006 -j DROP
+
+# Allow SSH access to Proxmox from admin IP
+iptables -A INPUT -p tcp --dport 22 -s $ADMIN_IP -j ACCEPT
+iptables -A INPUT -p tcp --dport 22 -j DROP
 
 # Block all other inbound traffic to Proxmox
 iptables -A INPUT -j DROP
