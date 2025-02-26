@@ -25,6 +25,11 @@ declare -A VM_SERVICES=(
     ["Safe"]="Telnet"
 )
 
+declare -A VM_MANAGEMENT=(
+    ["Lockbox"]="SSH"
+    ["Safe"]="WinRM"
+)
+
 echo "Applying firewall rules..."
 
 # Flush existing rules
@@ -44,12 +49,18 @@ iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 iptables -A FORWARD -s 10.${X_VALUE}.1.5 -d 10.${X_VALUE}.1.0/24 -j ACCEPT
 iptables -A FORWARD -s 10.${X_VALUE}.1.0/24 -d 10.${X_VALUE}.1.5 -j ACCEPT
 
-# Allow forwarding between VM bridge (vmbr0) and external network
+# Allow forwarding between VM bridge (vmbr0) and external network for Proxmox only
 iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-iptables -A FORWARD -i vmbr0 -o eth0 -j ACCEPT
-iptables -A FORWARD -i eth0 -o vmbr0 -j ACCEPT
+iptables -A FORWARD -i vmbr0 -o eth0 -s 10.${X_VALUE}.1.5 -j ACCEPT  # Proxmox can go out
+iptables -A FORWARD -i eth0 -o vmbr0 -d 10.${X_VALUE}.1.5 -j ACCEPT  # Replies to Proxmox allowed
 
-# Allow services for each VM (use FORWARD instead of INPUT)
+# Block all outbound traffic from VMs (except allowed inbound services)
+for VM in "${!VM_IPS[@]}"; do
+    VM_IP=${VM_IPS[$VM]}
+    iptables -A FORWARD -s $VM_IP -o eth0 -j DROP  # Block VMs from accessing external network
+done
+
+# Allow services for each VM (Inbound traffic only)
 for VM in "${!VM_IPS[@]}"; do
     VM_IP=${VM_IPS[$VM]}
     SERVICE=${VM_SERVICES[$VM]}
@@ -58,13 +69,31 @@ for VM in "${!VM_IPS[@]}"; do
 
     case $SERVICE in
         "ICMP")
-            iptables -A FORWARD -p icmp -s $VM_IP -j ACCEPT
+            iptables -A FORWARD -p icmp -d $VM_IP -j ACCEPT
             ;;
         "FTP")
-            iptables -A FORWARD -p tcp --dport 21 -s $VM_IP -j ACCEPT
+            iptables -A FORWARD -p tcp --dport 21 -d $VM_IP -j ACCEPT
             ;;
         "Telnet")
-            iptables -A FORWARD -p tcp --dport 23 -s $VM_IP -j ACCEPT
+            iptables -A FORWARD -p tcp --dport 23 -d $VM_IP -j ACCEPT
+            ;;
+    esac
+done
+
+# Allow remote management access (SSH for Lockbox, WinRM for Safe)
+for VM in "${!VM_MANAGEMENT[@]}"; do
+    VM_IP=${VM_IPS[$VM]}
+    MANAGEMENT_SERVICE=${VM_MANAGEMENT[$VM]}
+
+    echo "Allowing remote management for $VM ($VM_IP) - $MANAGEMENT_SERVICE"
+
+    case $MANAGEMENT_SERVICE in
+        "SSH")
+            iptables -A FORWARD -p tcp --dport 22 -d $VM_IP -j ACCEPT
+            ;;
+        "WinRM")
+            iptables -A FORWARD -p tcp --dport 5985 -d $VM_IP -j ACCEPT  # HTTP WinRM
+            iptables -A FORWARD -p tcp --dport 5986 -d $VM_IP -j ACCEPT  # HTTPS WinRM
             ;;
     esac
 done
@@ -77,4 +106,3 @@ iptables -A INPUT -p tcp --dport 8006 -j DROP
 iptables -A INPUT -j DROP
 
 echo "Firewall rules applied successfully!"
-
