@@ -9,11 +9,6 @@ check_dependencies() {
         echo "sshpass is not installed. Installing..."
         if [[ $(uname) == "Linux" ]]; then
             sudo apt update && sudo apt install -y sshpass  # Debian/Ubuntu
-        elif [[ $(uname) == "Darwin" ]]; then
-            brew install hudochenkov/sshpass/sshpass  # macOS (Homebrew)
-        else
-            echo "Unsupported OS. Please install sshpass manually."
-            exit 1
         fi
     else
         echo "sshpass is already installed."
@@ -48,9 +43,18 @@ if ! [[ "$X_VALUE" =~ ^[0-9]+$ ]]; then
 fi
 
 # Define IP addresses for remote systems
-PROXMOX_IP="10.${X_VALUE}.1.5"
-UBUNTU_IP="10.${X_VALUE}.1.11"
-WINDOWS_NANO_IP="10.${X_VALUE}.1.12"
+VAULT_IP="10.${X_VALUE}.1.1"
+OFFICE_IP="10.${X_VALUE}.1.2"
+TELLER_IP="10.${X_VALUE}.1.3"
+ATM_IP="10.${X_VALUE}.1.4"
+LOBBY_IP="10.${X_VALUE}.1.5"
+CASHROOM_IP="10.${X_VALUE}.1.10"
+LOCKBOX_IP="10.${X_VALUE}.1.11"
+SAFE_IP="10.${X_VALUE}.1.12"
+KOTH_IP="172.29.1.X"
+WIRE_IP="192.168.X.1"
+EBANKING_IP="192.168.X.2"
+ACCOUNTS_IP="192.168.X.3"
 
 # Check if creds.txt exists
 if [[ ! -f "creds.txt" ]]; then
@@ -61,103 +65,34 @@ fi
 # Load credentials into an array
 declare -A CREDENTIALS
 while IFS=, read -r USERNAME PASSWORD; do
-    # Ignore empty lines or lines starting with #
     [[ -z "$USERNAME" || "$USERNAME" =~ ^# ]] && continue
     CREDENTIALS["$USERNAME"]="$PASSWORD"
 done < creds.txt
 
-# Function to apply a simple Caesar cipher (shift characters)
-caesar_cipher() {
-    local text="$1"
-    local shift="$2"
-    local result=""
-
-    for ((i=0; i<${#text}; i++)); do
-        char="${text:i:1}"
-        if [[ "$char" =~ [a-zA-Z] ]]; then
-            base=65  # Default for uppercase
-            [[ "$char" =~ [a-z] ]] && base=97  # If lowercase, adjust base
-            
-            # Apply shift
-            new_char=$(( ( $(printf "%d" "'$char") - base + shift ) % 26 + base ))
-            result+=$(printf \\$(printf '%03o' "$new_char"))
-        else
-            result+="$char"  # Keep non-alphabet characters unchanged
-        fi
-    done
-
-    echo "$result"
-}
-
-# Function to decrypt received messages (reverse Caesar cipher)
-decrypt_message() {
-    local text="$1"
-    local shift="-3"  # Use negative shift to reverse encryption
-    caesar_cipher "$text" "$shift"
-}
-
-# Function to encrypt messages before sending via Telnet
-encrypt_message() {
-    local text="$1"
-    local shift="3"  # Positive shift for encryption
-    caesar_cipher "$text" "$shift"
-}
-
-# Function to establish an encrypted Telnet session
-telnet_connect() {
+# Function to establish a Telnet session and enable WinRM
+telnet_enable_winrm() {
     local IP="$1"
-    echo "Trying encrypted Telnet connection to $IP..."
-
+    echo "Connecting to $IP via Telnet..."
     for USER in "${!CREDENTIALS[@]}"; do
         PASS="${CREDENTIALS[$USER]}"
         echo "Trying user: $USER"
 
-        # Encrypt credentials before sending
-        ENCRYPTED_USER=$(encrypt_message "$USER")
-        ENCRYPTED_PASS=$(encrypt_message "$PASS")
-
-        # Establish Telnet session and send encrypted credentials
         {
-            echo "$ENCRYPTED_USER"
+            echo "$USER"
             sleep 1
-            echo "$ENCRYPTED_PASS"
+            echo "$PASS"
             sleep 1
-        } | telnet "$IP" | while read -r line; do
-            echo "Received (Encrypted): $line"
-            DECRYPTED_LINE=$(decrypt_message "$line")
-            echo "Decrypted: $DECRYPTED_LINE"
-        done
+            echo "winrm quickconfig -q"
+            sleep 2
+            echo "exit"
+        } | telnet "$IP"
 
         if [[ $? -eq 0 ]]; then
-            echo "Successful encrypted login via Telnet: $USER@$IP"
+            echo "WinRM enabled successfully on $IP."
             return
         fi
     done
-
-    echo "Failed to login via encrypted Telnet on $IP"
-}
-
-# Function for interactive encrypted Telnet commands
-telnet_interactive() {
-    local IP="$1"
-    echo "Connected to Windows Nano Server via Telnet with encryption."
-
-    while true; do
-        read -p "Encrypted PS> " COMMAND
-        if [[ "$COMMAND" == "exit" || "$COMMAND" == "quit" ]]; then
-            echo "Exiting encrypted Telnet session..."
-            break
-        fi
-        
-        # Encrypt the command before sending
-        ENCRYPTED_COMMAND=$(encrypt_message "$COMMAND")
-        
-        # Send encrypted command via Telnet
-        echo "$ENCRYPTED_COMMAND" | telnet "$IP" | while read -r response; do
-            DECRYPTED_RESPONSE=$(decrypt_message "$response")
-            echo "Decrypted: $DECRYPTED_RESPONSE"
-        done
-    done
+    echo "Failed to enable WinRM on $IP via Telnet."
 }
 
 # Function to attempt SSH connection
@@ -167,7 +102,7 @@ ssh_connect() {
     for USER in "${!CREDENTIALS[@]}"; do
         PASS="${CREDENTIALS[$USER]}"
         echo "Trying user: $USER"
-        sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$USER@$IP" exit
+        sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$USER@$IP"
         if [[ $? -eq 0 ]]; then
             echo "Successful login: $USER@$IP"
             sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$IP"
@@ -181,17 +116,33 @@ ssh_connect() {
 while true; do
     echo ""
     echo "Choose a machine to access:"
-    echo "1) Proxmox Host ($PROXMOX_IP) [SSH]"
-    echo "2) Ubuntu Server ($UBUNTU_IP) [SSH]"
-    echo "3) Windows Nano Server ($WINDOWS_NANO_IP) [Encrypted Telnet]"
-    echo "4) Exit"
+    echo "1) Vault ($VAULT_IP) [SSH]"
+    echo "2) Office ($OFFICE_IP) [SSH]"
+    echo "3) Teller ($TELLER_IP) [SSH]"
+    echo "4) ATM ($ATM_IP) [SSH]"
+    echo "5) Lobby ($LOBBY_IP) [SSH]"
+    echo "6) Cashroom ($CASHROOM_IP) [SSH]"
+    echo "7) Lockbox ($LOCKBOX_IP) [SSH]"
+    echo "8) Safe ($SAFE_IP) [Telnet to enable WinRM]"
+    echo "9) Wire ($WIRE_IP) [SSH]"
+    echo "10) EBanking ($EBANKING_IP) [SSH]"
+    echo "11) Accounts ($ACCOUNTS_IP) [SSH]"
+    echo "12) Exit"
     read -p "Enter your choice: " CHOICE
 
     case $CHOICE in
-        1) ssh_connect "$PROXMOX_IP" ;;
-        2) ssh_connect "$UBUNTU_IP" ;;
-        3) telnet_interactive "$WINDOWS_NANO_IP" ;;
-        4) echo "Exiting..."; exit 0 ;;
+        1) ssh_connect "$VAULT_IP" ;;
+        2) ssh_connect "$OFFICE_IP" ;;
+        3) ssh_connect "$TELLER_IP" ;;
+        4) ssh_connect "$ATM_IP" ;;
+        5) ssh_connect "$LOBBY_IP" ;;
+        6) ssh_connect "$CASHROOM_IP" ;;
+        7) ssh_connect "$LOCKBOX_IP" ;;
+        8) telnet_enable_winrm "$SAFE_IP" ;;
+        9) ssh_connect "$WIRE_IP" ;;
+        10) ssh_connect "$EBANKING_IP" ;;
+        11) ssh_connect "$ACCOUNTS_IP" ;;
+        12) echo "Exiting..."; exit 0 ;;
         *) echo "Invalid choice, please try again." ;;
     esac
 done
