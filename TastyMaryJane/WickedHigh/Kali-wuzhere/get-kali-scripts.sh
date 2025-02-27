@@ -1,5 +1,5 @@
 git clone https://github.com/LByrgeCP/dumbssh.git
 
-cd Linux/scripts
+cd dumbssh/Linux/scripts
 
 ls
